@@ -13,11 +13,20 @@ public class TestBot1 extends DefaultBWListener
 
     private Player self;
     
-    private Vector<Unit> workerList = new Vector<Unit>(0);
+    private Vector<Unit> selfWorkerList = new Vector<Unit>(0);
     
-    private Vector<Unit> buildingList = new Vector<Unit>(0);
+    private Vector<Unit> selfGasWorker = new Vector<Unit>(0);
+    
+    private Vector<Unit> selfBuildingList = new Vector<Unit>(0);
     
     boolean areListInitialized = false;
+    
+    int currentMinerals;
+    
+    int maxWorkers;
+    
+    int currentGasRefineries = 0;
+    int currentBaseNumber = 0;
 
     public void run() 
     {
@@ -56,17 +65,16 @@ public class TestBot1 extends DefaultBWListener
         	}
         	System.out.println();
         }
-        
-        
-
     }
 
     @Override
     public void onFrame() 
     {
+    	currentMinerals = self.minerals();
+    	
     	if(!areListInitialized)
     	{
-    		InitLists();
+    		InitListsAndVariables();
     	}
     	
     	ResetCounters();
@@ -74,60 +82,91 @@ public class TestBot1 extends DefaultBWListener
     	DrawDebugs();
         
         SendWorkersToMine();
-       
-        //if we lack SCVs, try to build an SCV
-        if (workerList.size() < 9)
+        
+        if(currentGasRefineries > 0 && selfGasWorker.size()%3 != 0)
+        {
+        	SendWorkersToGas();
+        }
+        
+        //if we lack SCVs, try to build an SCV but not too much of em.
+        if (selfWorkerList.size() < maxWorkers * currentBaseNumber + (currentGasRefineries*3) && currentMinerals >= 50 && self.supplyTotal() - self.supplyUsed() > 6)
         {
             TrainUnit(UnitType.Terran_SCV);
         }
         
+        if(selfWorkerList.size() >= 9 && currentGasRefineries < currentBaseNumber)
+        {
+        	BuildBuilding(selfWorkerList.firstElement(), UnitType.Terran_Refinery);
+        }
+        
         if(self.supplyTotal() - self.supplyUsed() <= 6)
         {
-        	BuildBuilding(workerList.firstElement(), UnitType.Terran_Supply_Depot);
+        	BuildBuilding(selfWorkerList.firstElement(), UnitType.Terran_Supply_Depot);
         }
     }
     
+    //Ensures filling of unit & building list.
     @Override
     public void onUnitComplete(Unit unit)
     {
-    	if(unit.getType().isWorker() && !workerList.contains(unit))
+    	if(unit.getType().isWorker() && !selfWorkerList.contains(unit) && unit.getPlayer() == self)
     	{
-    		workerList.add(unit);
+    		selfWorkerList.add(unit);
     	}
-    	if(unit.getType().isBuilding() && !buildingList.contains(unit))
+    	if(unit.getType().isBuilding() && !selfBuildingList.contains(unit) && unit.getPlayer() == self)
     	{
-    		buildingList.add(unit);
+    		selfBuildingList.add(unit);
+    		if(unit.getType() == UnitType.Terran_Refinery)
+    		{
+    			++currentGasRefineries;
+    		}
+    		if(unit.getType() == UnitType.Terran_Command_Center)
+    		{
+    			++currentBaseNumber;
+    		}
     	}
     }
     
+    //Ensures dead unit / destroyed buildings are removed from lists.
     @Override
     public void onUnitDestroy(Unit unit)
     {
-    	if(unit.getType().isWorker() && workerList.contains(unit))
+    	if(unit.getType().isWorker() && selfWorkerList.contains(unit) && unit.getPlayer() == self)
     	{
-    		workerList.remove(unit);
+    		selfWorkerList.remove(unit);
     	}
-    	if(unit.getType().isBuilding() && buildingList.contains(unit))
+    	if(unit.getType().isBuilding() && selfBuildingList.contains(unit) && unit.getPlayer() == self)
     	{
-    		buildingList.remove(unit);
+    		selfBuildingList.remove(unit);
     	}
     }
     
+    //Draw several needed debugs.
     public void DrawDebugs()
     {
-        //game.drawTextScreen(10, 10,"Workers alive : " + workerList.capacity());
+        game.drawTextScreen(10, 10,"Workers alive : " + selfWorkerList.capacity());
         game.drawTextScreen(10,230, "Resources: " + self.minerals() + " minerals " + self.gas() + " gas");
-        for(int i = 0; i < workerList.size(); i++)
-        {
-        	game.drawTextScreen(10, i*10, workerList.get(i).getType() + " ID : " + i);
-        }
     }
     
-    public void InitLists()
+    //initializes list and variables you need initialized at first frame.
+    public void InitListsAndVariables()
     {
-    	//if need, use this to initialize any list that wouldn't be initialized using the event onUnitComplete
+    	//if need, use this to initialize any list or variable that wouldn't be initialized using the event onUnitComplete
+    	int visibleMineralPatches = 0;
+    	for(Unit unit : game.neutral().getUnits())
+    	{
+    		if(unit.getType() == UnitType.Resource_Mineral_Field)
+    		{
+    			if(game.isVisible(unit.getTilePosition()))
+    			{
+    				++visibleMineralPatches;
+    			}
+    		}
+    	}
+    	maxWorkers = (int)Math.ceil((double)(visibleMineralPatches*2.5f));
     }
     
+    //Returns a valid position to build a building.
     public TilePosition getBuildTile(Unit builder, UnitType buildingType, TilePosition aroundTile) 
     {
     	TilePosition ret = null;
@@ -148,9 +187,9 @@ public class TestBot1 extends DefaultBWListener
 
     	while ((maxDist < stopDist) && (ret == null)) 
     	{
-    		for (int i=aroundTile.getX()-maxDist; i<=aroundTile.getX()+maxDist; i++) 
+    		for (int i=aroundTile.getX()-maxDist; i<=aroundTile.getX()+maxDist; ++i) 
     		{
-    			for (int j=aroundTile.getY()-maxDist; j<=aroundTile.getY()+maxDist; j++) 
+    			for (int j=aroundTile.getY()-maxDist; j<=aroundTile.getY()+maxDist; ++j) 
     			{
     				if (game.canBuildHere(new TilePosition(i,j), buildingType, builder, false)) 
     				{
@@ -158,19 +197,22 @@ public class TestBot1 extends DefaultBWListener
     					boolean unitsInWay = false;
     					for (Unit u : game.getAllUnits()) 
     					{
-    						if (u.getID() == builder.getID()) continue;
-    						if ((Math.abs(u.getTilePosition().getX()-i) < 4) && (Math.abs(u.getTilePosition().getY()-j) < 4)) unitsInWay = true;
+    						if (u.getID() == builder.getID()) 
+    							continue;
+    						if ((Math.abs(u.getTilePosition().getX()-i) < 4) && (Math.abs(u.getTilePosition().getY()-j) < 4)) 
+    							unitsInWay = true;
     					}
-    					if (!unitsInWay) {
+    					if (!unitsInWay) 
+    					{
     						return new TilePosition(i, j);
     					}
     					// creep for Zerg
     					if (buildingType.requiresCreep()) 
     					{
     						boolean creepMissing = false;
-    						for (int k=i; k<=i+buildingType.tileWidth(); k++) 
+    						for (int k=i; k<=i+buildingType.tileWidth(); ++k) 
     						{
-    							for (int l=j; l<=j+buildingType.tileHeight(); l++) 
+    							for (int l=j; l<=j+buildingType.tileHeight(); ++l) 
     							{
     								if (!game.hasCreep(k, l)) creepMissing = true;
     								break;
@@ -205,42 +247,87 @@ public class TestBot1 extends DefaultBWListener
         }
 
         //if a mineral patch was found, send the worker to gather it
-        if (closestMineral != null) 
+        if (closestMineral != null && myUnit.isIdle() && !myUnit.isGatheringGas()) 
         {
             myUnit.gather(closestMineral, false);
         }
     }
     
+    public void SendWorkerToGas(Unit worker)
+    {
+    	Unit closestGas = null;
+    	
+    	for (Unit building : selfBuildingList)
+    	{
+    		if(building.getType() == UnitType.Terran_Refinery)
+    		{
+    			if(closestGas == null || worker.getDistance(building) < worker.getDistance(closestGas))
+    			{
+    				closestGas = building;
+    			}
+    		}
+    	}
+    	
+    	if(closestGas != null && worker.isIdle() && !selfGasWorker.contains(worker))
+    	{
+    		worker.gather(closestGas);
+    		selfGasWorker.add(worker);
+    	}
+    }
+    
     public void SendWorkersToMine()
     {
-    	for(Unit worker : workerList)
+    	for(Unit worker : selfWorkerList)
     	{
-    		if(worker.isIdle())
+    		if(worker.isIdle() && !selfGasWorker.contains(worker))
     		{
     			SendWorkerToMine(worker);
     		}
     	}
     }
     
+    public void SendWorkersToGas()
+    {
+    	for(Unit worker : selfWorkerList)
+    	{
+    		if(worker.isIdle())
+    		{
+    			SendWorkerToGas(worker);
+    		}
+    	}
+    }
+    
     public boolean TrainUnit(UnitType type)
     {
-    	for(Unit building : buildingList)
+    	for(Unit building : selfBuildingList)
     	{
     		if(!building.isTraining())
     		{
-    			if(building.canTrain(type) && self.minerals() >= type.mineralPrice() && self.gas() >= type.gasPrice())
+    			if(building.canTrain(type))    				
     	    	{
-    	    		return building.train(type);
+    				if((self.minerals() >= type.mineralPrice() && self.gas() >= type.gasPrice()))
+    				{
+    					return building.train(type);
+    				}
+    				else
+    				{
+    					game.printf("You don't have enough resources");
+    					return false;
+    				}    	    		
     	    	}
+    			else
+    			{
+    				game.printf("You can't train that here");
+    				return false;
+    			}
     		}
     		else
     		{
-    			return false;
+    			game.printf("Building is busy");
+    			return false;    			
     		}
-    	}
-    	game.printf("Either can't train this unit, or you don't have enough resources");
-    	return false;
-    	
+    	}    	
+    	return false;    	
     }
     
     public void ResetCounters()
@@ -254,14 +341,23 @@ public class TestBot1 extends DefaultBWListener
     	{
     		if(worker.getType().isWorker()) 
         	{
-        		if(worker.canBuild(type) && self.minerals() >= type.mineralPrice() && self.gas() >= type.gasPrice())
+        		if(worker.canBuild(type))
+        			
             	{
-        			TilePosition tile = getBuildTile(worker, type,self.getStartLocation());
-            		return worker.build(type, tile);
+        			if (self.minerals() >= type.mineralPrice() && self.gas() >= type.gasPrice())
+        			{
+        				TilePosition tile = getBuildTile(worker, type,self.getStartLocation());
+                		return worker.build(type, tile);
+        			}
+        			else
+        			{
+        				game.printf("Can't build. You don't have enough workers");
+                		return false;
+        			}        			
             	}
             	else
             	{
-            		game.printf("Can't build. Either you don't have enought resources, or you can't build that");
+            		game.printf("Can't build. You can't build that");
             		return false;
             	}
         	}
